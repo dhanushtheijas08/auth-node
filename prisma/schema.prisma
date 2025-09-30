@@ -1,0 +1,58 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String             @id @default(auto()) @map("_id") @db.ObjectId
+  name             String
+  email            String             @unique
+  password         String
+  role             Role               @default(USER)
+  isVerified       Boolean            @default(false)
+  createdAt        DateTime           @default(now())
+  Session          Session[]
+  VerificationCode VerificationCode[]
+}
+
+model Session {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  sessionToken String   @unique
+  userId       String   @db.ObjectId
+  ipAddress    String
+  userAgent    String
+  expiresAt    DateTime
+
+  user User @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model VerificationCode {
+  id        String            @id @default(auto()) @map("_id") @db.ObjectId
+  code      String
+  type      Verification_Type @default(VERIFY_EMAIL)
+  expiresAt DateTime
+  userId    String            @db.ObjectId
+
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([code, userId])
+  @@index([userId])
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum Verification_Type {
+  RESET_PASSWORD
+  VERIFY_EMAIL
+}

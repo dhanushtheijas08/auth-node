@@ -11,3 +11,6 @@
 
 #!.yarn/cache
 .pnp.*
+
+/generated/prisma
+node_modules/*
