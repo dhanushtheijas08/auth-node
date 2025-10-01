@@ -12,4 +12,5 @@ export const env = {
   PORT: getEnv("PORT"),
   DATABASE_URL: getEnv("DATABASE_URL"),
   REDIS_URL: getEnv("REDIS_URL"),
+  MAIL_API_KEY: getEnv("MAIL_API_KEY"),
 };
