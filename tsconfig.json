@@ -2,12 +2,19 @@
   "compilerOptions": {
     "strict": true,
     "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node",
-    "module": "commonjs",
-    "target": "ES2020",
-    "jsx": "react-jsx"
+    "moduleResolution": "bundler",
+    "module": "ESNext",
+    "target": "ES2022",
+    "jsx": "react-jsx",
+    "outDir": "dist",
+    "allowImportingTsExtensions": true,
+    "noEmit": true
   },
-  "include": ["src", "prisma"]
+  "include": ["src", "prisma"],
+  "ts-node": {
+    "esm": true
+  }
 }

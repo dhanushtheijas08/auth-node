@@ -22,7 +22,6 @@ model User {
 
 model Session {
   id           String   @id @default(auto()) @map("_id") @db.ObjectId
-  sessionToken String   @unique
   userId       String   @db.ObjectId
   ipAddress    String
   userAgent    String
