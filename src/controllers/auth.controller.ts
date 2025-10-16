@@ -8,7 +8,7 @@ import { ApiError } from "../utils/ApiError";
 import { generateTokenPair } from "../services/jwt.service";
 import { setTokenCookies } from "../services/cookie.service";
 import { createSession } from "../services/session.service";
-
+import { Verification_Type as VerificationType } from "@prisma/client";
 export const register = async (
   req: Request,
   res: Response,
@@ -20,7 +20,6 @@ export const register = async (
     if (existingUser) throw new ApiError("User already exists", 400, "/login");
 
     const hashedPassword = await bcrypt.hash(password, 10);
-
     const user = await prisma.user.create({
       data: { email: email, name: name, password: hashedPassword },
     });
@@ -32,7 +31,6 @@ export const register = async (
       status: "ok",
       message: "Verify your email",
       redirectRoute: `/verify-code?email=${user.email}`,
-      code: code,
     });
   } catch (error) {
     next(error);
@@ -54,7 +52,10 @@ export const verifyUserEmail = async (
       throw new ApiError("Verified user", 400, "/login");
 
     const verificationCode = await prisma.verificationCode.findUnique({
-      where: { code_userId: { code: code, userId: user.id } },
+      where: {
+        code_userId: { code: code, userId: user.id },
+        type: type as VerificationType,
+      },
     });
 
     if (!verificationCode || verificationCode.expiresAt < new Date()) {
@@ -64,6 +65,10 @@ export const verifyUserEmail = async (
     if (code !== verificationCode.code) {
       throw new ApiError("Not correct");
     }
+
+    await prisma.verificationCode.delete({
+      where: { id: verificationCode.id },
+    });
 
     await prisma.user.update({
       where: { id: user.id },
@@ -102,16 +107,29 @@ export const login = async (
     const isValidUser = await prisma.user.findUnique({
       where: { email },
     });
-
     if (!isValidUser) throw new ApiError("Not valid user", 500, "/register");
-    if (!isValidUser.isVerified)
-      throw new ApiError("Verify you email", 500, "/register");
 
     const isValidPassword = await bcrypt.compare(
       password,
       isValidUser.password
     );
     if (!isValidPassword) throw new ApiError("Not valid user", 500);
+
+    if (!isValidUser.isVerified) {
+      const { code, expiresAt } = await verificationCode(
+        isValidUser.id,
+        "VERIFY_EMAIL"
+      );
+      if (expiresAt < new Date()) {
+        await sendMail("VERIFY_EMAIL", code);
+      }
+
+      return res.status(200).json({
+        status: "ok",
+        message: "Verify your email",
+        redirectRoute: `/verify-email?email=${isValidUser.email}`,
+      });
+    }
 
     const session = await createSession(isValidUser.id, req);
 

@@ -2,7 +2,7 @@ import { Verification_Type as verificationType } from "@prisma/client";
 
 export const emailTemplate = (
   type: verificationType,
-  validationCode: string,
+  validationCode: string
 ) => {
   switch (type) {
     case "VERIFY_EMAIL":

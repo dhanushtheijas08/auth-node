@@ -1,6 +1,5 @@
 import { Request } from "express";
 import { prisma } from "../config/db";
-import crypto from "crypto";
 import { Session } from "@prisma/client";
 
 export const extractClientInfo = (
@@ -28,7 +27,6 @@ export const createSession = async (
       expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * expirationDays),
       ipAddress,
       userAgent,
-      sessionToken: crypto.randomUUID(),
     },
   });
 
