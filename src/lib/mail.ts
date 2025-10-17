@@ -5,7 +5,8 @@ import { Verification_Type as VerificationType } from "@prisma/client";
 
 export const sendMail = async (
   verificationType: VerificationType,
-  code: string
+  code: string,
+  userEmail: string
 ) => {
   const transporter = nodemailer.createTransport({
     host: "smtp.resend.com",
@@ -17,10 +18,16 @@ export const sendMail = async (
     },
   });
 
+  const subject =
+    verificationType === "VERIFY_EMAIL"
+      ? "Verify Your Email Address"
+      : "Your Verification Code";
+
   await transporter.sendMail({
-    from: "onboarding@resend.dev",
+    from: "Acme <onboarding@resend.dev>",
+    // to: userEmail,
     to: "delivered@resend.dev",
-    subject: "Hello World",
+    subject: subject,
     html: emailTemplate(verificationType, code),
   });
 };

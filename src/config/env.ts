@@ -13,6 +13,7 @@ export const env = {
   DATABASE_URL: getEnv("DATABASE_URL"),
   REDIS_URL: getEnv("REDIS_URL"),
   MAIL_API_KEY: getEnv("MAIL_API_KEY"),
+  // FROM_EMAIL: getEnv("FROM_EMAIL"),
   JWT_SECRET: getEnv("JWT_SECRET"),
   NODE_ENV: getEnv("NODE_ENV"),
 };

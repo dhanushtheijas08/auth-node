@@ -1,6 +1,5 @@
 import * as jose from "jose";
 import { env } from "../config/env";
-import { ApiError } from "../utils/ApiError";
 
 const secret = new TextEncoder().encode(env.JWT_SECRET);
 

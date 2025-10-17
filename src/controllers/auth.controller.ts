@@ -1,14 +1,27 @@
+import { Verification_Type as VerificationType } from "@prisma/client";
 import bcrypt from "bcrypt";
 import { NextFunction, Request, Response } from "express";
 import { prisma } from "../config/db";
 import { sendMail } from "../lib/mail";
-import { loginSchema, registerSchema } from "../schemas/auth.schema";
+import {
+  loginSchema,
+  registerSchema,
+  resendOtpSchema,
+} from "../schemas/auth.schema";
+import {
+  clearTokenCookies,
+  setAccessTokenCookie,
+  setTokenCookies,
+} from "../services/cookie.service";
+import {
+  generateAccessToken,
+  generateTokenPair,
+  verifyToken,
+} from "../services/jwt.service";
+import { createSession } from "../services/session.service";
 import { verificationCode } from "../services/verification.service";
 import { ApiError } from "../utils/ApiError";
-import { generateTokenPair } from "../services/jwt.service";
-import { setTokenCookies } from "../services/cookie.service";
-import { createSession } from "../services/session.service";
-import { Verification_Type as VerificationType } from "@prisma/client";
+import { verificationCodeGenerator } from "../utils/verificationCodeGenerator";
 export const register = async (
   req: Request,
   res: Response,
@@ -25,12 +38,12 @@ export const register = async (
     });
 
     const { code } = await verificationCode(user.id, "VERIFY_EMAIL");
-    await sendMail("VERIFY_EMAIL", code);
+    await sendMail("VERIFY_EMAIL", code, user.email);
 
     res.status(201).json({
       status: "ok",
       message: "Verify your email",
-      redirectRoute: `/verify-code?email=${user.email}`,
+      redirectRoute: `/verify-email?email=${user.email}&verificationType=VERIFY_EMAIL`,
     });
   } catch (error) {
     next(error);
@@ -43,11 +56,14 @@ export const verifyUserEmail = async (
   next: NextFunction
 ) => {
   try {
-    const { email, type } = req.params;
+    const { email, verificationType: type } = resendOtpSchema.parse(req.query);
     const { code } = req.body;
 
+    if (!code || code.length !== 6) {
+      throw new ApiError("Invalid code", 400);
+    }
     const user = await prisma.user.findUnique({ where: { email: email } });
-    if (!user) throw new ApiError("Invalide User", 500, "/register");
+    if (!user) throw new ApiError("Invalid User", 400, "/register");
     else if (user && user.isVerified)
       throw new ApiError("Verified user", 400, "/login");
 
@@ -59,11 +75,7 @@ export const verifyUserEmail = async (
     });
 
     if (!verificationCode || verificationCode.expiresAt < new Date()) {
-      throw new ApiError("Invalid code", 500);
-    }
-
-    if (code !== verificationCode.code) {
-      throw new ApiError("Not correct");
+      throw new ApiError("Invalid or expired code", 400);
     }
 
     await prisma.verificationCode.delete({
@@ -90,6 +102,61 @@ export const verifyUserEmail = async (
     return res.status(200).json({
       status: "ok",
       message: "User verified",
+      redirectRoute: "/dashboard",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const resendOtp = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { email, verificationType } = resendOtpSchema.parse(req.body);
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) throw new ApiError("Invalid user", 400, "/register");
+    if (user.isVerified)
+      throw new ApiError("User already verified", 400, "/login");
+
+    const { createdAt, id } = await verificationCode(user.id, verificationType);
+
+    const timeSinceCreation = Date.now() - createdAt.getTime();
+    const resendWait = 2 * 60 * 1000; // 2 minutes in ms
+
+    if (timeSinceCreation < resendWait) {
+      const remainingSeconds = Math.ceil(
+        (resendWait - timeSinceCreation) / 1000
+      );
+      throw new ApiError(
+        `Please wait ${remainingSeconds} seconds before requesting a new OTP.`,
+        429
+      );
+    }
+
+    const newCode = verificationCodeGenerator(verificationType);
+
+    await prisma.verificationCode.delete({
+      where: { id },
+    });
+
+    await prisma.verificationCode.create({
+      data: {
+        userId: user.id,
+        type: verificationType,
+        code: newCode,
+        expiresAt: new Date(Date.now() + 1000 * 60 * 5),
+      },
+    });
+
+    await sendMail(verificationType, newCode, user.email);
+
+    return res.status(200).json({
+      status: "ok",
+      message: "New verification code sent to your email.",
     });
   } catch (error) {
     next(error);
@@ -107,30 +174,38 @@ export const login = async (
     const isValidUser = await prisma.user.findUnique({
       where: { email },
     });
-    if (!isValidUser) throw new ApiError("Not valid user", 500, "/register");
+    if (!isValidUser) throw new ApiError("Invalid user", 401, "/register");
 
     const isValidPassword = await bcrypt.compare(
       password,
       isValidUser.password
     );
-    if (!isValidPassword) throw new ApiError("Not valid user", 500);
+    if (!isValidPassword) throw new ApiError("Invalid credentials", 401);
 
     if (!isValidUser.isVerified) {
-      const { code, expiresAt } = await verificationCode(
+      const { code, isNewCode } = await verificationCode(
         isValidUser.id,
         "VERIFY_EMAIL"
       );
-      if (expiresAt < new Date()) {
-        await sendMail("VERIFY_EMAIL", code);
+
+      if (isNewCode) {
+        await sendMail("VERIFY_EMAIL", code, isValidUser.email);
+        return res.status(200).json({
+          status: "ok",
+          message: "Verification email sent to your inbox.",
+          redirectRoute: `/verify-email?email=${isValidUser.email}&verificationType=VERIFY_EMAIL`,
+        });
       }
 
       return res.status(200).json({
         status: "ok",
-        message: "Verify your email",
-        redirectRoute: `/verify-email?email=${isValidUser.email}`,
+        message:
+          "A verification code was already sent to your email. Please check your inbox.",
+        redirectRoute: `/verify-email?email=${isValidUser.email}&verificationType=VERIFY_EMAIL`,
       });
     }
 
+    // If verified, create session and tokens
     const session = await createSession(isValidUser.id, req);
 
     const { accessToken, refreshToken } = await generateTokenPair(
@@ -146,6 +221,96 @@ export const login = async (
     return res.status(200).json({
       status: "ok",
       message: "Login successful",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const logout = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { accessToken } = req.cookies;
+    if (!accessToken) throw new ApiError("Unauthorized", 401);
+
+    const { jti: sessionId } = await verifyToken(accessToken);
+
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+    });
+    if (!session) throw new ApiError("Unauthorized", 401);
+    if (session.expiresAt < new Date())
+      throw new ApiError("Session expired", 401);
+
+    const user = await prisma.user.findUnique({
+      where: { id: session.userId },
+    });
+    if (!user) throw new ApiError("Unauthorized", 401);
+
+    await prisma.session.delete({ where: { id: session.id } });
+    clearTokenCookies(res);
+    return res.status(200).json({
+      status: "ok",
+      message: "Logout successful",
+      redirectRoute: "/login",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const refreshToken = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { refreshToken: oldRefreshToken } = req.cookies;
+    if (!oldRefreshToken) throw new ApiError("Unauthorized", 401);
+
+    const { jti: sessionId } = await verifyToken(oldRefreshToken);
+
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+    });
+    if (!session) throw new ApiError("Unauthorized", 401);
+    if (session.expiresAt < new Date())
+      throw new ApiError("Session expired", 401);
+
+    const user = await prisma.user.findUnique({
+      where: { id: session.userId },
+    });
+    if (!user) throw new ApiError("Unauthorized", 401);
+
+    if (session.expiresAt < new Date(Date.now() + 1000 * 60 * 60 * 24 * 1)) {
+      await prisma.session.delete({ where: { id: session.id } });
+      const newSession = await createSession(user.id, req);
+      const { accessToken, refreshToken } = await generateTokenPair(
+        {
+          userId: user.id,
+          role: user.role,
+        },
+        newSession.id
+      );
+      setTokenCookies(res, accessToken, refreshToken);
+    } else {
+      const accessToken = await generateAccessToken(
+        {
+          userId: user.id,
+          role: user.role,
+        },
+        session.id
+      );
+
+      setAccessTokenCookie(res, accessToken);
+    }
+
+    return res.status(200).json({
+      status: "ok",
+      message: "Token refreshed",
     });
   } catch (error) {
     next(error);

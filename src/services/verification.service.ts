@@ -6,24 +6,37 @@ export const verificationCode = async (
   userId: string,
   verificationType: VerificationType
 ) => {
-  const code = verificationCodeGenerator(verificationType);
+  const now = new Date();
 
   const existingCode = await prisma.verificationCode.findFirst({
-    where: { userId, type: verificationType, expiresAt: { gt: new Date() } },
-  });
-
-  if (existingCode) {
-    return existingCode;
-  }
-
-  const verificationCode = await prisma.verificationCode.create({
-    data: {
-      code: code,
+    where: {
+      userId,
       type: verificationType,
-      expiresAt: new Date(Date.now() + 1000 * 60 * 5),
-      userId: userId,
+      expiresAt: { gt: now },
     },
   });
 
-  return verificationCode;
+  if (existingCode) {
+    return {
+      ...existingCode,
+      isNewCode: false,
+    };
+  }
+
+  const code = verificationCodeGenerator(verificationType);
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 5);
+
+  const newCode = await prisma.verificationCode.create({
+    data: {
+      code,
+      type: verificationType,
+      expiresAt,
+      userId,
+    },
+  });
+
+  return {
+    ...newCode,
+    isNewCode: true,
+  };
 };
