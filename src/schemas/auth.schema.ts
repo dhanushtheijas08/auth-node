@@ -21,6 +21,15 @@ export const registerSchema = z
   .extend(loginSchema.shape);
 
 export const resendOtpSchema = z.object({
-  email: z.string().trim().toLowerCase(),
+  email: z.email("Invalid email").trim().toLowerCase(),
   verificationType: z.enum(Verification_Type).default("VERIFY_EMAIL"),
+});
+
+export const verifyEmailQuerySchema = z.object({
+  email: z.email("Invalid email").trim().toLowerCase(),
+  verificationType: z.enum(Verification_Type),
+});
+
+export const verifyEmailBodySchema = z.object({
+  code: z.string().trim().length(6, "Code must be 6 characters"),
 });

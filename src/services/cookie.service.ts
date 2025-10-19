@@ -40,7 +40,7 @@ export const setRefreshTokenCookie = (
   const defaultRefreshTokenOptions: CookieOptions = {
     ...defaultOptions,
     expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30), // 30 days
-    path: "/refresh",
+    path: "/api/v1/auth/refresh-token",
   };
 
   const cookieOptions = { ...defaultRefreshTokenOptions, ...options };
@@ -66,7 +66,7 @@ export const setTokenCookies = (
     .cookie("refreshToken", refreshToken, {
       ...defaultOptions,
       expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30), // 30 days
-      path: "/refresh",
+      path: "/api/v1/auth/refresh-token",
       ...options.refreshTokenOptions,
     });
 };
@@ -80,7 +80,7 @@ export const clearAccessTokenCookie = (res: Response): Response => {
 export const clearRefreshTokenCookie = (res: Response): Response => {
   return res.clearCookie("refreshToken", {
     ...defaultOptions,
-    path: "/refresh",
+    path: "/api/v1/auth/refresh-token",
   });
 };
 
@@ -91,6 +91,6 @@ export const clearTokenCookies = (res: Response): Response => {
     })
     .clearCookie("refreshToken", {
       ...defaultOptions,
-      path: "/refresh",
+      path: "/api/v1/auth/refresh-token",
     });
 };

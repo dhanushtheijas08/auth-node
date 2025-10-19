@@ -7,6 +7,8 @@ import {
   loginSchema,
   registerSchema,
   resendOtpSchema,
+  verifyEmailBodySchema,
+  verifyEmailQuerySchema,
 } from "../schemas/auth.schema";
 import {
   clearTokenCookies,
@@ -40,10 +42,12 @@ export const register = async (
     const { code } = await verificationCode(user.id, "VERIFY_EMAIL");
     await sendMail("VERIFY_EMAIL", code, user.email);
 
+    const encodedEmail = encodeURIComponent(user.email);
+    const encodedType = encodeURIComponent("VERIFY_EMAIL");
     res.status(201).json({
       status: "ok",
       message: "Verify your email",
-      redirectRoute: `/verify-email?email=${user.email}&verificationType=VERIFY_EMAIL`,
+      redirectRoute: `/verify-email?email=${encodedEmail}&verificationType=${encodedType}`,
     });
   } catch (error) {
     next(error);
@@ -56,21 +60,21 @@ export const verifyUserEmail = async (
   next: NextFunction
 ) => {
   try {
-    const { email, verificationType: type } = resendOtpSchema.parse(req.query);
-    const { code } = req.body;
-
-    if (!code || code.length !== 6) {
-      throw new ApiError("Invalid code", 400);
-    }
+    const { email, verificationType: type } = verifyEmailQuerySchema.parse(
+      req.query
+    );
+    const { code } = verifyEmailBodySchema.parse(req.body);
     const user = await prisma.user.findUnique({ where: { email: email } });
     if (!user) throw new ApiError("Invalid User", 400, "/register");
     else if (user && user.isVerified)
       throw new ApiError("Verified user", 400, "/login");
 
-    const verificationCode = await prisma.verificationCode.findUnique({
+    const verificationCode = await prisma.verificationCode.findFirst({
       where: {
-        code_userId: { code: code, userId: user.id },
+        userId: user.id,
         type: type as VerificationType,
+        code: code,
+        expiresAt: { gt: new Date() },
       },
     });
 
@@ -190,18 +194,22 @@ export const login = async (
 
       if (isNewCode) {
         await sendMail("VERIFY_EMAIL", code, isValidUser.email);
+        const encEmail = encodeURIComponent(isValidUser.email);
+        const encType = encodeURIComponent("VERIFY_EMAIL");
         return res.status(200).json({
           status: "ok",
           message: "Verification email sent to your inbox.",
-          redirectRoute: `/verify-email?email=${isValidUser.email}&verificationType=VERIFY_EMAIL`,
+          redirectRoute: `/verify-email?email=${encEmail}&verificationType=${encType}`,
         });
       }
 
+      const encEmail2 = encodeURIComponent(isValidUser.email);
+      const encType2 = encodeURIComponent("VERIFY_EMAIL");
       return res.status(200).json({
         status: "ok",
         message:
           "A verification code was already sent to your email. Please check your inbox.",
-        redirectRoute: `/verify-email?email=${isValidUser.email}&verificationType=VERIFY_EMAIL`,
+        redirectRoute: `/verify-email?email=${encEmail2}&verificationType=${encType2}`,
       });
     }
 
@@ -285,7 +293,7 @@ export const refreshToken = async (
     });
     if (!user) throw new ApiError("Unauthorized", 401);
 
-    if (session.expiresAt < new Date(Date.now() + 1000 * 60 * 60 * 24 * 1)) {
+    if (session.expiresAt < new Date(Date.now() + 1000 * 60 * 60 * 24)) {
       await prisma.session.delete({ where: { id: session.id } });
       const newSession = await createSession(user.id, req);
       const { accessToken, refreshToken } = await generateTokenPair(
