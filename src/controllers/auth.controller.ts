@@ -208,7 +208,7 @@ export const login = async (
       return res.status(200).json({
         status: "ok",
         message:
-          "A verification code was already sent to your email. Please check your inbox.",
+          "Verification code was already sent to your email. Please check your inbox.",
         redirectRoute: `/verify-email?email=${encEmail2}&verificationType=${encType2}`,
       });
     }
