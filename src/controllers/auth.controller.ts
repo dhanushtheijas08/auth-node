@@ -1,12 +1,15 @@
 import { Verification_Type as VerificationType } from "@prisma/client";
 import bcrypt from "bcrypt";
 import { NextFunction, Request, Response } from "express";
+import z from "zod";
 import { prisma } from "../config/db";
 import { sendMail } from "../lib/mail";
 import {
+  forgortPasswordSchme,
   loginSchema,
   registerSchema,
   resendOtpSchema,
+  resetPasswordSchme,
   verifyEmailBodySchema,
   verifyEmailQuerySchema,
 } from "../schemas/auth.schema";
@@ -65,11 +68,16 @@ export const verifyUserEmail = async (
     );
     const { code } = verifyEmailBodySchema.parse(req.body);
     const user = await prisma.user.findUnique({ where: { email: email } });
-    if (!user) throw new ApiError("Invalid User", 400, "/register");
+    if (!user)
+      throw new ApiError(
+        "Invalid verification code or email",
+        400,
+        "/register"
+      );
     else if (user && user.isVerified)
-      throw new ApiError("Verified user", 400, "/login");
+      throw new ApiError("User already verified", 400, "/login");
 
-    const verificationCode = await prisma.verificationCode.findFirst({
+    const verificationRecord = await prisma.verificationCode.findFirst({
       where: {
         userId: user.id,
         type: type as VerificationType,
@@ -78,12 +86,12 @@ export const verifyUserEmail = async (
       },
     });
 
-    if (!verificationCode || verificationCode.expiresAt < new Date()) {
-      throw new ApiError("Invalid or expired code", 400);
+    if (!verificationRecord) {
+      throw new ApiError("Invalid verification code or email", 400);
     }
 
     await prisma.verificationCode.delete({
-      where: { id: verificationCode.id },
+      where: { id: verificationRecord.id },
     });
 
     await prisma.user.update({
@@ -113,7 +121,7 @@ export const verifyUserEmail = async (
   }
 };
 
-export const resendOtp = async (
+export const resendVerificationCode = async (
   req: Request,
   res: Response,
   next: NextFunction
@@ -122,18 +130,23 @@ export const resendOtp = async (
     const { email, verificationType } = resendOtpSchema.parse(req.body);
 
     const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) throw new ApiError("Invalid user", 400, "/register");
+    if (!user)
+      throw new ApiError("Invalid email or user not found", 400, "/register");
     if (user.isVerified)
       throw new ApiError("User already verified", 400, "/login");
 
-    const { createdAt, id } = await verificationCode(user.id, verificationType);
+    const verificationRecord = await verificationCode(
+      user.id,
+      verificationType
+    );
 
-    const timeSinceCreation = Date.now() - createdAt.getTime();
-    const resendWait = 2 * 60 * 1000; // 2 minutes in ms
+    const timeSinceCreation =
+      Date.now() - verificationRecord.createdAt.getTime();
+    const resendWaitMs = 2 * 60 * 1000; // 2 minutes in ms
 
-    if (timeSinceCreation < resendWait) {
+    if (timeSinceCreation < resendWaitMs) {
       const remainingSeconds = Math.ceil(
-        (resendWait - timeSinceCreation) / 1000
+        (resendWaitMs - timeSinceCreation) / 1000
       );
       throw new ApiError(
         `Please wait ${remainingSeconds} seconds before requesting a new OTP.`,
@@ -143,16 +156,12 @@ export const resendOtp = async (
 
     const newCode = verificationCodeGenerator(verificationType);
 
-    await prisma.verificationCode.delete({
-      where: { id },
-    });
-
-    await prisma.verificationCode.create({
+    await prisma.verificationCode.update({
+      where: { id: verificationRecord.id },
       data: {
-        userId: user.id,
-        type: verificationType,
         code: newCode,
         expiresAt: new Date(Date.now() + 1000 * 60 * 5),
+        createdAt: new Date(),
       },
     });
 
@@ -175,51 +184,42 @@ export const login = async (
   try {
     const { email, password } = loginSchema.parse(req.body);
 
-    const isValidUser = await prisma.user.findUnique({
+    const user = await prisma.user.findUnique({
       where: { email },
     });
-    if (!isValidUser) throw new ApiError("Invalid user", 401, "/register");
+    if (!user)
+      throw new ApiError("Invalid email or password", 401, "/register");
 
-    const isValidPassword = await bcrypt.compare(
-      password,
-      isValidUser.password
-    );
-    if (!isValidPassword) throw new ApiError("Invalid credentials", 401);
+    const isPasswordCorrect = await bcrypt.compare(password, user.password);
+    if (!isPasswordCorrect)
+      throw new ApiError("Invalid email or password", 401);
 
-    if (!isValidUser.isVerified) {
+    if (!user.isVerified) {
       const { code, isNewCode } = await verificationCode(
-        isValidUser.id,
+        user.id,
         "VERIFY_EMAIL"
       );
 
       if (isNewCode) {
-        await sendMail("VERIFY_EMAIL", code, isValidUser.email);
-        const encEmail = encodeURIComponent(isValidUser.email);
-        const encType = encodeURIComponent("VERIFY_EMAIL");
-        return res.status(200).json({
-          status: "ok",
-          message: "Verification email sent to your inbox.",
-          redirectRoute: `/verify-email?email=${encEmail}&verificationType=${encType}`,
-        });
+        await sendMail("VERIFY_EMAIL", code, user.email);
       }
 
-      const encEmail2 = encodeURIComponent(isValidUser.email);
-      const encType2 = encodeURIComponent("VERIFY_EMAIL");
+      const encodedEmail = encodeURIComponent(user.email);
+      const encodedType = encodeURIComponent("VERIFY_EMAIL");
       return res.status(200).json({
         status: "ok",
-        message:
-          "Verification code was already sent to your email. Please check your inbox.",
-        redirectRoute: `/verify-email?email=${encEmail2}&verificationType=${encType2}`,
+        message: "Verification email sent to your inbox.",
+        redirectRoute: `/verify-email?email=${encodedEmail}&verificationType=${encodedType}`,
       });
     }
 
     // If verified, create session and tokens
-    const session = await createSession(isValidUser.id, req);
+    const session = await createSession(user.id, req);
 
     const { accessToken, refreshToken } = await generateTokenPair(
       {
-        userId: isValidUser.id,
-        role: isValidUser.role,
+        userId: user.id,
+        role: user.role,
       },
       session.id
     );
@@ -229,6 +229,102 @@ export const login = async (
     return res.status(200).json({
       status: "ok",
       message: "Login successful",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const forgotPassword = async (
+  req: Request<{}, {}, z.infer<typeof forgortPasswordSchme>>,
+  res: Response,
+  next: NextFunction
+) => {
+  const { email, verificationType } = req.body;
+  if (verificationType !== "RESET_PASSWORD")
+    throw new ApiError("Invalid verification type", 401);
+
+  try {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user || !user.isVerified)
+      throw new ApiError("Not Verified User", 401, "/login");
+
+    const recentGeneratedCode = await prisma.verificationCode.findFirst({
+      where: {
+        userId: user.id,
+        type: verificationType,
+        createdAt: { gte: new Date(Date.now() - 3 * 60 * 1000) },
+      },
+    });
+
+    if (recentGeneratedCode) {
+      const now = Date.now();
+      const created = new Date(recentGeneratedCode.createdAt).getTime();
+
+      const diffMs = now - created; // how long ago it was created
+      const cooldownMs = 3 * 60 * 1000; // 3 minutes in ms
+      const remainingMs = cooldownMs - diffMs;
+
+      const remainingSeconds = Math.ceil(remainingMs / 1000);
+      const remainingMinutes = Math.floor(remainingSeconds / 60);
+      const seconds = remainingSeconds % 60;
+
+      throw new ApiError(
+        `Please wait ${remainingMinutes}m ${seconds}s before requesting a new code.`,
+        429
+      );
+    }
+
+    const code = verificationCodeGenerator("RESET_PASSWORD");
+
+    const verificationCode = await prisma.verificationCode.create({
+      data: {
+        code,
+        expiresAt: new Date(Date.now() + 1000 * 60 * 5),
+        type: verificationType,
+        userId: user.id,
+      },
+    });
+
+    await sendMail(verificationType, verificationCode.code, user.email);
+    return res.status(200).json({
+      status: "ok",
+      message: "Reset password code sent to your email.",
+      redirectRoute: `/reset-password?email=${email}`,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const resetPassword = async (
+  req: Request<{}, {}, z.infer<typeof resetPasswordSchme>>,
+  res: Response,
+  next: NextFunction
+) => {
+  const { email, password, code } = req.body;
+  try {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) throw new ApiError("Not Verified User", 400, "/login");
+
+    const verificationCode = await prisma.verificationCode.findFirst({
+      where: {
+        userId: user.id,
+        type: "RESET_PASSWORD",
+        expiresAt: { lt: new Date(Date.now()) },
+      },
+    });
+    if (!verificationCode || verificationCode.code !== code)
+      throw new ApiError("Invalid verification code", 400);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { password: await bcrypt.hash(password, 10) },
+    });
+    return res.status(200).json({
+      status: "ok",
+      message: "Password reset successful",
+      redirectRoute: "/login",
     });
   } catch (error) {
     next(error);

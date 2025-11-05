@@ -59,8 +59,8 @@ const rateLimiterConfigs = {
   },
   resendOtp: {
     keyPrefix: "resend-otp",
-    points: 3,
-    duration: 600,
+    points: 5,
+    duration: 5 * 60,
     blockDuration: 10 * 60,
     message: "Too many OTP requests.",
   },

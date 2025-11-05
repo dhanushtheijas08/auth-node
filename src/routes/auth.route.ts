@@ -1,26 +1,58 @@
 import { Router } from "express";
 import {
+  forgotPassword,
   login,
-  register,
-  verifyUserEmail,
-  resendOtp,
   logout,
   refreshToken,
+  register,
+  resendVerificationCode,
+  resetPassword,
+  verifyUserEmail,
 } from "../controllers/auth.controller";
 import {
   loginRateLimitMiddleware,
-  registerRateLimitMiddleware,
-  verifyEmailRateLimitMiddleware,
-  resendOtpRateLimitMiddleware,
   refreshTokenRateLimitMiddleware,
+  registerRateLimitMiddleware,
+  resendOtpRateLimitMiddleware,
+  verifyEmailRateLimitMiddleware,
 } from "../middleware/rateLimiter";
-const route = Router();
+import { validator } from "../middleware/validater";
+import {
+  forgortPasswordSchme,
+  resetPasswordSchme,
+} from "../schemas/auth.schema";
+const authRouter = Router();
 
-route.post("/register", registerRateLimitMiddleware, register);
-route.post("/verify-email", verifyEmailRateLimitMiddleware, verifyUserEmail);
-route.post("/resend-otp", resendOtpRateLimitMiddleware, resendOtp);
-route.post("/login", loginRateLimitMiddleware, login);
-route.delete("/logout", logout);
-route.post("/refresh-token", refreshTokenRateLimitMiddleware, refreshToken);
+authRouter.post("/register", registerRateLimitMiddleware, register);
+authRouter.post(
+  "/verify-email",
+  verifyEmailRateLimitMiddleware,
+  verifyUserEmail
+);
+authRouter.post(
+  "/resend-verification-code",
+  resendOtpRateLimitMiddleware,
+  resendVerificationCode
+);
+authRouter.post("/login", loginRateLimitMiddleware, login);
 
-export default route;
+authRouter.post(
+  "/forgot-password",
+  validator({ body: forgortPasswordSchme }),
+  forgotPassword
+);
+
+authRouter.post(
+  "/reset-password",
+  validator({ body: resetPasswordSchme }),
+  resetPassword
+);
+
+authRouter.delete("/logout", logout);
+authRouter.post(
+  "/refresh-token",
+  refreshTokenRateLimitMiddleware,
+  refreshToken
+);
+
+export default authRouter;

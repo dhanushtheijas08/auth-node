@@ -25,6 +25,14 @@ export const resendOtpSchema = z.object({
   verificationType: z.enum(Verification_Type).default("VERIFY_EMAIL"),
 });
 
+export const forgortPasswordSchme = resendOtpSchema;
+
+export const resetPasswordSchme = z
+  .object({
+    code: z.string().trim().length(6, "Code must be 6 characters"),
+  })
+  .extend(loginSchema.shape);
+
 export const verifyEmailQuerySchema = z.object({
   email: z.email("Invalid email").trim().toLowerCase(),
   verificationType: z.enum(Verification_Type),
