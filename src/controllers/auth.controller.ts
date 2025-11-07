@@ -26,7 +26,6 @@ import {
 import { createSession } from "../services/session.service";
 import { verificationCode } from "../services/verification.service";
 import { ApiError } from "../utils/ApiError";
-import { verificationCodeGenerator } from "../utils/verificationCodeGenerator";
 export const register = async (
   req: Request,
   res: Response,
@@ -42,15 +41,24 @@ export const register = async (
       data: { email: email, name: name, password: hashedPassword },
     });
 
-    const { code } = await verificationCode(user.id, "VERIFY_EMAIL");
-    await sendMail("VERIFY_EMAIL", code, user.email);
+    const { code, shouldSendEmail } = await verificationCode(
+      user.id,
+      "VERIFY_EMAIL"
+    );
+
+    // Always send email for new registration
+    if (shouldSendEmail) {
+      await sendMail("VERIFY_EMAIL", code, user.email);
+    }
 
     const encodedEmail = encodeURIComponent(user.email);
     const encodedType = encodeURIComponent("VERIFY_EMAIL");
+    const verifyEmailUrl = `/verify-email?email=${encodedEmail}&verificationType=${encodedType}`;
+
     res.status(201).json({
       status: "ok",
       message: "Verify your email",
-      redirectRoute: `/verify-email?email=${encodedEmail}&verificationType=${encodedType}`,
+      redirectRoute: verifyEmailUrl,
     });
   } catch (error) {
     next(error);
@@ -135,41 +143,21 @@ export const resendVerificationCode = async (
     if (user.isVerified)
       throw new ApiError("User already verified", 400, "/login");
 
-    const verificationRecord = await verificationCode(
+    const { code, shouldSendEmail } = await verificationCode(
       user.id,
       verificationType
     );
 
-    const timeSinceCreation =
-      Date.now() - verificationRecord.createdAt.getTime();
-    const resendWaitMs = 2 * 60 * 1000; // 2 minutes in ms
-
-    if (timeSinceCreation < resendWaitMs) {
-      const remainingSeconds = Math.ceil(
-        (resendWaitMs - timeSinceCreation) / 1000
-      );
-      throw new ApiError(
-        `Please wait ${remainingSeconds} seconds before requesting a new OTP.`,
-        429
-      );
+    // Send email only if a new code was generated or if requested
+    if (shouldSendEmail) {
+      await sendMail(verificationType, code, user.email);
     }
-
-    const newCode = verificationCodeGenerator(verificationType);
-
-    await prisma.verificationCode.update({
-      where: { id: verificationRecord.id },
-      data: {
-        code: newCode,
-        expiresAt: new Date(Date.now() + 1000 * 60 * 5),
-        createdAt: new Date(),
-      },
-    });
-
-    await sendMail(verificationType, newCode, user.email);
 
     return res.status(200).json({
       status: "ok",
-      message: "New verification code sent to your email.",
+      message: shouldSendEmail
+        ? "New verification code sent to your email."
+        : "Verification code resent to your email.",
     });
   } catch (error) {
     next(error);
@@ -195,25 +183,27 @@ export const login = async (
       throw new ApiError("Invalid email or password", 401);
 
     if (!user.isVerified) {
-      const { code, isNewCode } = await verificationCode(
+      const { code, shouldSendEmail } = await verificationCode(
         user.id,
         "VERIFY_EMAIL"
       );
 
-      if (isNewCode) {
+      // Send email if new code was generated or code was recently created
+      if (shouldSendEmail) {
         await sendMail("VERIFY_EMAIL", code, user.email);
       }
 
       const encodedEmail = encodeURIComponent(user.email);
       const encodedType = encodeURIComponent("VERIFY_EMAIL");
+      const verifyEmailUrl = `/verify-email?email=${encodedEmail}&verificationType=${encodedType}`;
+
       return res.status(200).json({
         status: "ok",
         message: "Verification email sent to your inbox.",
-        redirectRoute: `/verify-email?email=${encodedEmail}&verificationType=${encodedType}`,
+        redirectRoute: verifyEmailUrl,
       });
     }
 
-    // If verified, create session and tokens
     const session = await createSession(user.id, req);
 
     const { accessToken, refreshToken } = await generateTokenPair(
@@ -249,48 +239,25 @@ export const forgotPassword = async (
     if (!user || !user.isVerified)
       throw new ApiError("Not Verified User", 401, "/login");
 
-    const recentGeneratedCode = await prisma.verificationCode.findFirst({
-      where: {
-        userId: user.id,
-        type: verificationType,
-        createdAt: { gte: new Date(Date.now() - 3 * 60 * 1000) },
-      },
-    });
+    const { code, shouldSendEmail } = await verificationCode(
+      user.id,
+      verificationType
+    );
 
-    if (recentGeneratedCode) {
-      const now = Date.now();
-      const created = new Date(recentGeneratedCode.createdAt).getTime();
-
-      const diffMs = now - created; // how long ago it was created
-      const cooldownMs = 3 * 60 * 1000; // 3 minutes in ms
-      const remainingMs = cooldownMs - diffMs;
-
-      const remainingSeconds = Math.ceil(remainingMs / 1000);
-      const remainingMinutes = Math.floor(remainingSeconds / 60);
-      const seconds = remainingSeconds % 60;
-
-      throw new ApiError(
-        `Please wait ${remainingMinutes}m ${seconds}s before requesting a new code.`,
-        429
-      );
+    // Send email if new code was generated
+    if (shouldSendEmail) {
+      await sendMail(verificationType, code, user.email);
     }
 
-    const code = verificationCodeGenerator("RESET_PASSWORD");
+    const encodedEmail = encodeURIComponent(email);
+    const resetPasswordUrl = `/reset-password?email=${encodedEmail}`;
 
-    const verificationCode = await prisma.verificationCode.create({
-      data: {
-        code,
-        expiresAt: new Date(Date.now() + 1000 * 60 * 5),
-        type: verificationType,
-        userId: user.id,
-      },
-    });
-
-    await sendMail(verificationType, verificationCode.code, user.email);
     return res.status(200).json({
       status: "ok",
-      message: "Reset password code sent to your email.",
-      redirectRoute: `/reset-password?email=${email}`,
+      message: shouldSendEmail
+        ? "Reset password code sent to your email."
+        : "Reset password code resent to your email.",
+      redirectRoute: resetPasswordUrl,
     });
   } catch (error) {
     next(error);

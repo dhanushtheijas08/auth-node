@@ -15,6 +15,7 @@ import {
   registerRateLimitMiddleware,
   resendOtpRateLimitMiddleware,
   verifyEmailRateLimitMiddleware,
+  forgotPasswordRateLimitMiddleware,
 } from "../middleware/rateLimiter";
 import { validator } from "../middleware/validater";
 import {
@@ -38,6 +39,7 @@ authRouter.post("/login", loginRateLimitMiddleware, login);
 
 authRouter.post(
   "/forgot-password",
+  forgotPasswordRateLimitMiddleware,
   validator({ body: forgortPasswordSchme }),
   forgotPassword
 );

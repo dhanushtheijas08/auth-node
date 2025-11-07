@@ -64,6 +64,13 @@ const rateLimiterConfigs = {
     blockDuration: 10 * 60,
     message: "Too many OTP requests.",
   },
+  forgotPassword: {
+    keyPrefix: "forgot-password",
+    points: 5,
+    duration: 5 * 60,
+    blockDuration: 10 * 60,
+    message: "Too many password reset requests.",
+  },
   refreshToken: {
     keyPrefix: "refresh-token",
     points: 10,
@@ -84,6 +91,9 @@ export const verifyEmailRateLimitMiddleware = createRateLimitMiddleware(
 );
 export const resendOtpRateLimitMiddleware = createRateLimitMiddleware(
   rateLimiterConfigs.resendOtp
+);
+export const forgotPasswordRateLimitMiddleware = createRateLimitMiddleware(
+  rateLimiterConfigs.forgotPassword
 );
 export const refreshTokenRateLimitMiddleware = createRateLimitMiddleware(
   rateLimiterConfigs.refreshToken
